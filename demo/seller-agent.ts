@@ -14,8 +14,18 @@ const cfg: MarcConfig = {
 const seller = Keypair.fromSecret(process.env.SELLER_SECRET!);
 const jobId = Number(process.env.JOB_ID!);
 
+/**
+ * Service price for the x402 paywall.
+ *
+ * Configurable via the SELLER_SERVICE_PRICE env var so it can be tuned
+ * without touching source code.  Accepts any value that marcPaywall accepts,
+ * e.g. "$0.01", "$1.00".  Defaults to "$0.01".
+ */
+const servicePrice: string = process.env.SELLER_SERVICE_PRICE ?? "$0.01";
+
 console.log(`\n=== SELLER DEMO ===`);
-console.log(`Seller: ${seller.publicKey()}\n`);
+console.log(`Seller: ${seller.publicKey()}`);
+console.log(`Service price: ${servicePrice}\n`);
 
 // Step 1: Register agent identity
 const identity = new IdentityClient(cfg);
@@ -32,7 +42,7 @@ const app = express();
 
 app.use("/api/work", marcPaywall({
   payTo: seller.publicKey(),
-  price: "$0.01",
+  price: servicePrice,           // ← driven by env var, not hardcoded
   network: "stellar:testnet",
   description: "One MARC-protected API call",
   facilitatorUrl: process.env.X402_FACILITATOR_URL,
@@ -52,6 +62,6 @@ if (jobId) {
   const commerce = new CommerceClient(cfg);
   await commerce.submit(seller, jobId, "ipfs://work-results.json");
   console.log(`[3] Deliverable submitted for job ${jobId}`);
-  console.log(`    Awaiting evaluator approval...\n`);
+  console.log(`    Awaiting evaluator approval…\n`);
   console.log(`=== SELLER DONE ===\n`);
 }
