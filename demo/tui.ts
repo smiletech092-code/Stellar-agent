@@ -21,14 +21,85 @@ const ENV_PATH = new URL(".env", import.meta.url).pathname;
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const ACTIVE_STATUSES = ["registering", "creating job", "submitting", "completing", "calling API", "funding", "init"];
 
+// ── Terminal width guard ───────────────────────────────────────────────────────
+// Blessed layouts are expressed as percentages so they reflow, but some label
+// and content strings still need a minimum width to render without wrapping
+// into illegible fragments.  80 columns is a safe floor; below that we warn
+// the user and continue in a degraded (plain-log) mode rather than crashing.
+
+const MIN_COLS = 80;
+const MIN_ROWS = 24;
+
+function terminalTooSmall(): boolean {
+  const cols = process.stdout.columns ?? 0;
+  const rows = process.stdout.rows ?? 0;
+  return cols < MIN_COLS || rows < MIN_ROWS;
+}
+
+// Plain-text fallback used when the terminal is too small for the TUI.
+let usePlainLog = terminalTooSmall();
+
+if (usePlainLog) {
+  const cols = process.stdout.columns ?? "?";
+  const rows = process.stdout.rows ?? "?";
+  console.warn(
+    `\n⚠  Terminal too small (${cols}×${rows}).  ` +
+    `Minimum required: ${MIN_COLS}×${MIN_ROWS}.\n` +
+    `Falling back to plain-text log output.  Resize your terminal and restart for the full TUI.\n`,
+  );
+}
+
+// Re-check on SIGWINCH so that a resize mid-run is caught.  We only switch from
+// TUI → plain, not the other way, to avoid tearing up the blessed screen.
+process.stdout.on("resize", () => {
+  if (!usePlainLog && terminalTooSmall()) {
+    usePlainLog = true;
+    try { screen.destroy(); } catch { /* ignore */ }
+    console.warn(
+      `\n⚠  Terminal resized below minimum (${process.stdout.columns}×${process.stdout.rows}).  ` +
+      `Switching to plain-text output.\n`,
+    );
+  }
+});
+
 // ── TUI ───────────────────────────────────────────────────────────────────────
 
 const screen = blessed.screen({ smartCSR: true, title: "MARC Marketplace" });
-const sellersBox = blessed.box({ top: 0, left: 0, width: "50%", height: "45%", label: " SELLERS ", border: { type: "line" }, tags: true, style: { border: { fg: "cyan" }, label: { fg: "cyan", bold: true } } });
-const buyersBox = blessed.box({ top: 0, left: "50%", width: "50%", height: "45%", label: " BUYERS ", border: { type: "line" }, tags: true, style: { border: { fg: "magenta" }, label: { fg: "magenta", bold: true } } });
-const treasuryBox = blessed.box({ top: "45%", left: 0, width: "100%", height: "10%", label: " TREASURY ", border: { type: "line" }, tags: true, style: { border: { fg: "green" }, label: { fg: "green", bold: true } } });
-const feedBox = blessed.log({ top: "55%", left: 0, width: "100%", height: "45%", label: " ACTIVITY FEED ", border: { type: "line" }, tags: true, scrollable: true, alwaysScroll: true, style: { border: { fg: "yellow" }, label: { fg: "yellow", bold: true } } });
-screen.append(sellersBox); screen.append(buyersBox); screen.append(treasuryBox); screen.append(feedBox);
+
+// All widths/heights are percentages so blessed handles reflow automatically.
+const sellersBox = blessed.box({
+  top: 0, left: 0, width: "50%", height: "45%",
+  label: " SELLERS ",
+  border: { type: "line" },
+  tags: true,
+  style: { border: { fg: "cyan" }, label: { fg: "cyan", bold: true } },
+});
+const buyersBox = blessed.box({
+  top: 0, left: "50%", width: "50%", height: "45%",
+  label: " BUYERS ",
+  border: { type: "line" },
+  tags: true,
+  style: { border: { fg: "magenta" }, label: { fg: "magenta", bold: true } },
+});
+const treasuryBox = blessed.box({
+  top: "45%", left: 0, width: "100%", height: "10%",
+  label: " TREASURY ",
+  border: { type: "line" },
+  tags: true,
+  style: { border: { fg: "green" }, label: { fg: "green", bold: true } },
+});
+const feedBox = blessed.log({
+  top: "55%", left: 0, width: "100%", height: "45%",
+  label: " ACTIVITY FEED ",
+  border: { type: "line" },
+  tags: true, scrollable: true, alwaysScroll: true,
+  style: { border: { fg: "yellow" }, label: { fg: "yellow", bold: true } },
+});
+
+screen.append(sellersBox);
+screen.append(buyersBox);
+screen.append(treasuryBox);
+screen.append(feedBox);
 screen.key(["q", "C-c"], () => process.exit(0));
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -66,13 +137,26 @@ function isActive(status: string) { return ACTIVE_STATUSES.some((s) => status.st
 
 let treasuryUsdc = "0.00";
 
+/**
+ * Truncate a status string to fit the available column budget.
+ * Each agent row has fixed overhead for label, agentId, spinner, job count,
+ * and USDC balance.  On narrow terminals the status field is clipped.
+ */
+function fitStatus(status: string, maxLen = 20): string {
+  const cols = process.stdout.columns ?? MIN_COLS;
+  // Scale max length proportionally when terminal is narrower than MIN_COLS.
+  const adjusted = Math.max(8, Math.floor(maxLen * (cols / MIN_COLS)));
+  return status.length > adjusted ? status.slice(0, adjusted - 1) + "…" : status.padEnd(adjusted);
+}
+
 function render() {
+  if (usePlainLog) return; // plain-text path handled by feed()
   const spin = SPINNER[spinFrame];
   sellersBox.setContent(sellers.map((s) =>
-    `{cyan-fg}${s.label}{/cyan-fg}  agent#${s.agentId ?? "?"}  ${isActive(s.status) ? spin + " " : "  "}${s.status.padEnd(20)}  jobs:${s.jobs}  USDC:${s.usdc}`
+    `{cyan-fg}${s.label}{/cyan-fg}  agent#${s.agentId ?? "?"}  ${isActive(s.status) ? spin + " " : "  "}${fitStatus(s.status)}  jobs:${s.jobs}  USDC:${s.usdc}`
   ).join("\n"));
   buyersBox.setContent(buyers.map((b) =>
-    `{magenta-fg}${b.label}{/magenta-fg}  agent#${b.agentId ?? "?"}  ${isActive(b.status) ? spin + " " : "  "}${b.status.padEnd(20)}  jobs:${b.jobs}  USDC:${b.usdc}`
+    `{magenta-fg}${b.label}{/magenta-fg}  agent#${b.agentId ?? "?"}  ${isActive(b.status) ? spin + " " : "  "}${fitStatus(b.status)}  jobs:${b.jobs}  USDC:${b.usdc}`
   ).join("\n"));
   treasuryBox.setContent(`{green-fg}${TESTNET.deployer}{/green-fg}  USDC: {bold}${treasuryUsdc}{/bold}`);
   screen.render();
@@ -80,7 +164,15 @@ function render() {
 
 function feed(msg: string) {
   const ts = new Date().toTimeString().slice(0, 8);
-  const truncated = msg.length > 120 ? msg.slice(0, 117) + "…" : msg;
+  // Strip blessed tags for plain-text output
+  const plain = msg.replace(/\{[^}]+\}/g, "");
+  if (usePlainLog) {
+    console.log(`[${ts}] ${plain}`);
+    return;
+  }
+  const cols = process.stdout.columns ?? MIN_COLS;
+  const maxLen = Math.max(40, cols - 12); // account for timestamp prefix
+  const truncated = msg.length > maxLen ? msg.slice(0, maxLen - 1) + "…" : msg;
   feedBox.log(`{gray-fg}[${ts}]{/gray-fg} ${truncated}`);
   screen.render();
 }
@@ -120,7 +212,6 @@ async function addUsdcTrustline(kp: Keypair) {
   const { Horizon, Asset, Operation, TransactionBuilder: TB, Networks } = await import("@stellar/stellar-sdk");
   const server = new Horizon.Server(horizonUrl);
   const account = await server.loadAccount(kp.publicKey());
-  // Check if trustline already exists
   const has = account.balances.some((b: any) => b.asset_code === "USDC");
   if (has) return;
   const usdcIssuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
@@ -187,7 +278,7 @@ async function runBuyer(b: AgentState, index: number, sellerList: { state: Agent
   await commerce.complete(b.kp, jobId);
   b.usdc = await getUsdc(b.kp.publicKey());
   picked.state.usdc = await getUsdc(picked.state.kp.publicKey());
-  b.status = "done ✓"; picked.state.status = `ready (:${picked.port})`; 
+  b.status = "done ✓"; picked.state.status = `ready (:${picked.port})`;
   treasuryUsdc = await getUsdc(TESTNET.deployer);
   render();
   feed(`{green-fg}✓ job #${jobId} complete — 99% → ${picked.state.label}, 1% → treasury (${treasuryUsdc} USDC){/green-fg}`);
