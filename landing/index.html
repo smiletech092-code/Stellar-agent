@@ -22,6 +22,7 @@
         <a href="#protocol" class="nav-link" data-section="protocol">Protocol</a>
         <a href="#how-it-works" class="nav-link" data-section="how-it-works">How It Works</a>
         <a href="#guide" class="nav-link" data-section="guide">Guide</a>
+        <a href="#try-it" class="nav-link" data-section="try-it">Try It</a>
       </div>
       <div class="nav-actions">
         <button class="hamburger" id="hamburger" aria-label="Toggle menu" aria-expanded="false">
@@ -257,6 +258,29 @@
       </div>
     </section>
 
+    <!-- Try It -->
+    <section class="section" id="try-it">
+      <div class="container">
+        <div class="tryit-header fade-in">
+          <span class="eyebrow">Playground</span>
+          <h2 class="section-title">Try It <span class="accent">in the browser.</span></h2>
+          <p class="section-desc">Explore the Bear SDK without installing anything. Fork the sandbox to experiment with identity registration and job escrow.</p>
+        </div>
+        <div class="tryit-embed fade-in">
+          <iframe
+            src="https://stackblitz.com/edit/bear-stellar-sdk?embed=1&file=index.ts&view=editor&hideNavigation=1"
+            title="Bear SDK Playground"
+            loading="lazy"
+            allow="cross-origin-isolated"
+            sandbox="allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts"
+          ></iframe>
+          <div class="tryit-fallback">
+            <p>Sandbox failed to load. <a href="https://stackblitz.com/edit/bear-stellar-sdk" target="_blank" rel="noopener">Open in StackBlitz →</a></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Deployed Contracts -->
     <section class="section" id="contracts">
       <div class="container contracts-container">
@@ -326,9 +350,9 @@
 
   <script src="app.js"></script>
   <script>
-    // #83: Load contract addresses from deployments/testnet.json
-    fetch('/deployments/testnet.json')
-      .then(r => r.ok ? r.json() : null)
+    // Load contract addresses from API endpoint, fall back to deployments file
+    fetch('/api/contract-addresses.json')
+      .then(r => r.ok ? r.json() : fetch('/deployments/testnet.json').then(r2 => r2.ok ? r2.json() : null))
       .then(data => {
         if (!data) return;
         document.querySelectorAll('.contract-addr').forEach(btn => {
